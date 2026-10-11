@@ -1,0 +1,59 @@
+name: Import verified public source
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and expand audited archive
+        run: |
+          python - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import hashlib, zipfile
+          archive = Path('public-source.zip')
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == 'cf2a8631be8def660add2459ddffbda1fe179b83da7d84cb7d6c12129f985187'
+          with zipfile.ZipFile(archive) as z:
+              names = z.namelist()
+              assert len(names) == 404 and len(names) == len(set(names))
+              for name in names:
+                  p = PurePosixPath(name)
+                  assert not p.is_absolute() and '..' not in p.parts and '.git' not in p.parts
+                  if p.parts[0] == '.github':
+                      assert Path(name).read_bytes() == z.read(name), name
+                      continue
+                  target = Path(name)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(z.read(name))
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate exported project
+        run: |
+          bash -n start.sh
+          bash -n start-macos.sh
+          bash -n update.sh
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+          python -m pip install -r backend/requirements.txt pytest
+          (cd backend && SAU_DATA_DIR="$RUNNER_TEMP/import-test" python -m unittest tests.test_account_maintenance -v)
+          python scripts/check_fresh_start.py
+      - name: Commit complete source
+        run: |
+          python - <<'PY'
+          import subprocess, zipfile
+          with zipfile.ZipFile('public-source.zip') as z:
+              names = [n for n in z.namelist() if not n.startswith('.github/')]
+          subprocess.run(['git', 'add', '--', *names], check=True)
+          PY
+          git rm public-source.zip
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "发布马小马平台完整源码、部署说明和双芯片构建配置"
+          git push origin HEAD:main
