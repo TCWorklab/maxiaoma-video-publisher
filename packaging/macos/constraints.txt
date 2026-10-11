@@ -1,0 +1,3 @@
+# Keep the browser wrapper/driver matched to the currently installed application.
+cloakbrowser==0.5.12
+playwright==1.63.0
